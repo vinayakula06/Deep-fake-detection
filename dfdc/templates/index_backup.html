@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>DeepShield — AI Deepfake Detector</title>
+<meta name="description" content="Detect deepfakes instantly using an ensemble of EfficientNet-B7 Noisy Student models trained on the DFDC dataset."/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;600&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#030712;--surface:rgba(255,255,255,.04);--border:rgba(0,229,255,.15);
+  --cyan:#00e5ff;--red:#ff3d71;--green:#00e676;--yellow:#ffd600;
+  --text:#e2e8f0;--muted:#64748b;
+  --font-head:'Syne',sans-serif;--font-mono:'JetBrains Mono',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--font-mono);min-height:100vh;overflow-x:hidden}
+
+/* ── animated grid bg ── */
+body::before{content:'';position:fixed;inset:0;
+  background-image:linear-gradient(rgba(0,229,255,.04) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(0,229,255,.04) 1px,transparent 1px);
+  background-size:40px 40px;pointer-events:none;z-index:0}
+
+/* ── glowing orbs ── */
+.orb{position:fixed;border-radius:50%;filter:blur(80px);pointer-events:none;z-index:0;animation:pulse 6s ease-in-out infinite}
+.orb-tl{width:400px;height:400px;top:-100px;left:-100px;background:rgba(0,229,255,.08)}
+.orb-br{width:500px;height:500px;bottom:-150px;right:-150px;background:rgba(255,61,113,.07);animation-delay:3s}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
+
+/* ── noise overlay ── */
+body::after{content:'';position:fixed;inset:0;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events:none;z-index:1;opacity:.4}
+
+main{position:relative;z-index:2}
+
+/* ── header ── */
+header{display:flex;align-items:center;justify-content:space-between;padding:1.2rem 2.5rem;
+  border-bottom:1px solid var(--border);backdrop-filter:blur(12px);
+  background:rgba(3,7,18,.7);position:sticky;top:0;z-index:100}
+.logo{font-family:var(--font-head);font-size:1.5rem;font-weight:800;
+  background:linear-gradient(135deg,var(--cyan),#7c3aed);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.badge{font-size:.7rem;padding:.2rem .6rem;border:1px solid var(--cyan);border-radius:20px;color:var(--cyan);letter-spacing:.05em}
+.status{display:flex;align-items:center;gap:.5rem;font-size:.8rem;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:blink 2s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ── hero ── */
+.hero{text-align:center;padding:4rem 2rem 2rem}
+.hero h1{font-family:var(--font-head);font-size:clamp(2rem,5vw,3.5rem);font-weight:800;line-height:1.1;
+  background:linear-gradient(135deg,#fff 30%,var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:1rem}
+.hero p{color:var(--muted);max-width:520px;margin:0 auto 2rem;line-height:1.7;font-size:.9rem}
+.stats-row{display:flex;justify-content:center;gap:2rem;flex-wrap:wrap;margin-top:1.5rem}
+.stat{text-align:center}
+.stat-val{font-size:1.6rem;font-weight:700;color:var(--cyan)}
+.stat-lbl{font-size:.7rem;color:var(--muted);margin-top:.2rem;letter-spacing:.08em;text-transform:uppercase}
+
+/* ── card ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:2rem;backdrop-filter:blur(12px)}
+
+/* ── detector section ── */
+.detector{max-width:860px;margin:2rem auto;padding:0 1.5rem}
+
+/* ── drop zone ── */
+#drop-zone{border:2px dashed var(--border);border-radius:14px;padding:3rem 2rem;text-align:center;
+  cursor:pointer;transition:all .3s;position:relative;overflow:hidden}
+#drop-zone.drag-over{border-color:var(--cyan);background:rgba(0,229,255,.05);box-shadow:0 0 30px rgba(0,229,255,.15)}
+#drop-zone .dz-icon{font-size:3rem;margin-bottom:1rem}
+#drop-zone h3{font-family:var(--font-head);font-size:1.2rem;margin-bottom:.5rem}
+#drop-zone p{color:var(--muted);font-size:.85rem;margin-bottom:1.2rem}
+.format-chips{display:flex;gap:.4rem;justify-content:center;flex-wrap:wrap}
+.chip{font-size:.7rem;padding:.2rem .6rem;border:1px solid var(--border);border-radius:20px;color:var(--muted)}
+#file-input{display:none}
+
+/* ── ring animation ── */
+#drop-zone::before{content:'';position:absolute;inset:-2px;border-radius:16px;
+  background:conic-gradient(from 0deg,transparent 60%,var(--cyan) 80%,transparent 100%);
+  animation:spin 4s linear infinite;opacity:0;transition:opacity .3s;z-index:-1}
+#drop-zone.drag-over::before{opacity:1}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── preview ── */
+#preview-section{display:none;margin-top:1.5rem}
+#preview-wrap{position:relative;border-radius:10px;overflow:hidden;background:#000;max-height:320px;display:flex;justify-content:center}
+#preview-video,#preview-img{max-height:320px;max-width:100%;border-radius:10px}
+.scan-line{position:absolute;top:0;left:0;width:100%;height:3px;background:linear-gradient(90deg,transparent,var(--cyan),transparent);
+  animation:scan 2s linear infinite;display:none}
+@keyframes scan{from{top:0}to{top:100%}}
+.file-info{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem;margin-top:1rem;font-size:.78rem;color:var(--muted)}
+.file-info b{color:var(--text)}
+#thumb-strip{display:flex;gap:.4rem;overflow-x:auto;margin-top:1rem;padding-bottom:.3rem}
+#thumb-strip img{width:72px;height:54px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0}
+
+/* ── analyze button ── */
+#analyze-btn{width:100%;padding:1rem;margin-top:1.5rem;background:linear-gradient(135deg,var(--cyan),#7c3aed);
+  border:none;border-radius:12px;color:#000;font-family:var(--font-head);font-size:1rem;font-weight:700;
+  cursor:pointer;transition:all .3s;letter-spacing:.05em}
+#analyze-btn:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 30px rgba(0,229,255,.35)}
+#analyze-btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* ── progress steps ── */
+#progress-section{display:none;margin-top:2rem}
+.steps{display:flex;flex-direction:column;gap:.8rem;margin-bottom:1.5rem}
+.step{display:flex;align-items:center;gap:1rem;padding:.9rem 1.2rem;border-radius:10px;
+  background:var(--surface);border:1px solid var(--border);transition:all .4s}
+.step.active{border-color:var(--cyan);box-shadow:0 0 15px rgba(0,229,255,.1)}
+.step.done{border-color:var(--green)}
+.step-icon{font-size:1.4rem;width:36px;text-align:center}
+.step-label{flex:1;font-size:.85rem}
+.step-status{font-size:.75rem;color:var(--muted)}
+.step.active .step-status{color:var(--cyan)}
+.step.done .step-status{color:var(--green)}
+.progress-bar{height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden}
+.progress-fill{height:100%;width:0;border-radius:3px;
+  background:linear-gradient(90deg,var(--cyan),#7c3aed);
+  transition:width .6s ease;position:relative}
+.progress-fill::after{content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.4) 50%,transparent 100%);
+  animation:shimmer 1.5s infinite}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+
+/* ── results ── */
+#results-section{display:none;margin-top:2rem}
+.verdict-card{padding:2rem;text-align:center;border-radius:16px;margin-bottom:1.5rem;
+  border:2px solid var(--border);transition:all .5s}
+.verdict-card.fake{border-color:var(--red);background:rgba(255,61,113,.06);box-shadow:0 0 40px rgba(255,61,113,.15)}
+.verdict-card.real{border-color:var(--green);background:rgba(0,230,118,.06);box-shadow:0 0 40px rgba(0,230,118,.15)}
+.verdict-label{font-family:var(--font-head);font-size:3rem;font-weight:800;letter-spacing:.1em}
+.verdict-card.fake .verdict-label{color:var(--red)}
+.verdict-card.real .verdict-label{color:var(--green)}
+.verdict-sub{color:var(--muted);font-size:.85rem;margin-top:.3rem}
+
+/* ── gauge ── */
+.gauge-wrap{display:flex;justify-content:center;margin:1.5rem 0;overflow:visible}
+#gauge-svg{overflow:visible;display:block}
+.gauge-track{fill:none;stroke:rgba(255,255,255,.1);stroke-width:16;stroke-linecap:round}
+.gauge-fill{fill:none;stroke-width:16;stroke-linecap:round;transition:stroke-dashoffset 1.2s cubic-bezier(.4,0,.2,1),stroke .5s}
+#gauge-needle{transition:transform 1.2s cubic-bezier(.4,0,.2,1)}
+
+/* ── metrics grid ── */
+.metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1rem;margin-bottom:1.5rem}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1rem;text-align:center}
+.metric-val{font-size:1.5rem;font-weight:700;color:var(--cyan)}
+.metric-lbl{font-size:.7rem;color:var(--muted);margin-top:.2rem;text-transform:uppercase;letter-spacing:.07em}
+
+/* ── bar chart ── */
+#chart-wrap{margin-bottom:1.5rem}
+#chart-wrap h4{font-size:.85rem;color:var(--muted);margin-bottom:.8rem;letter-spacing:.06em;text-transform:uppercase}
+#frame-bars{display:flex;align-items:flex-end;gap:2px;height:80px}
+.bar{flex:1;border-radius:3px 3px 0 0;transition:height .8s ease,background .5s;min-width:4px}
+
+/* ── explanation box ── */
+.explain{background:rgba(0,229,255,.04);border:1px solid var(--border);border-radius:10px;padding:1.2rem;
+  font-size:.82rem;line-height:1.7;color:var(--muted);margin-bottom:1.2rem}
+.explain strong{color:var(--cyan)}
+
+/* ── action buttons ── */
+.actions{display:flex;gap:.8rem;flex-wrap:wrap}
+.btn{padding:.7rem 1.4rem;border-radius:9px;border:1px solid var(--border);background:var(--surface);
+  color:var(--text);font-family:var(--font-mono);font-size:.82rem;cursor:pointer;transition:all .25s}
+.btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.btn-primary{background:linear-gradient(135deg,var(--cyan),#7c3aed);border:none;color:#000;font-weight:700}
+.btn-primary:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,229,255,.3);color:#000}
+
+/* ── how it works ── */
+.how{max-width:1000px;margin:4rem auto;padding:0 1.5rem}
+.how h2{font-family:var(--font-head);font-size:1.8rem;font-weight:700;text-align:center;margin-bottom:2rem;
+  background:linear-gradient(135deg,#fff,var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem}
+.feature{padding:1.5rem;border-radius:14px;background:var(--surface);border:1px solid var(--border);
+  transition:all .3s}
+.feature:hover{border-color:var(--cyan);transform:translateY(-3px);box-shadow:0 10px 30px rgba(0,229,255,.08)}
+.feature-icon{font-size:2rem;margin-bottom:.8rem}
+.feature h3{font-family:var(--font-head);font-size:1rem;margin-bottom:.5rem;color:var(--cyan)}
+.feature p{font-size:.8rem;color:var(--muted);line-height:1.6}
+
+/* ── footer ── */
+footer{text-align:center;padding:2rem;border-top:1px solid var(--border);font-size:.78rem;color:var(--muted);margin-top:3rem}
+
+/* ── toast ── */
+#toast{position:fixed;bottom:2rem;right:2rem;padding:.8rem 1.4rem;border-radius:10px;font-size:.82rem;
+  background:rgba(3,7,18,.95);border:1px solid var(--border);transform:translateY(100px);opacity:0;
+  transition:all .35s;z-index:999;max-width:320px}
+#toast.show{transform:translateY(0);opacity:1}
+#toast.success{border-color:var(--green);color:var(--green)}
+#toast.error{border-color:var(--red);color:var(--red)}
+#toast.info{border-color:var(--cyan);color:var(--cyan)}
+
+@media(max-width:600px){
+  header{padding:1rem;flex-wrap:wrap;gap:.5rem}
+  .stats-row{gap:1rem}
+  .actions{flex-direction:column}
+}
+</style>
+</head>
+<body>
+<div class="orb orb-tl"></div>
+<div class="orb orb-br"></div>
+<div id="toast"></div>
+
+<main>
+<!-- HEADER -->
+<header>
+  <div class="logo">⬡ DeepShield</div>
+  <span class="badge">EfficientNet-B7 NS · Ensemble</span>
+  <div class="status"><div class="dot"></div><span id="status-text">Connecting…</span></div>
+</header>
+
+<!-- HERO -->
+<section class="hero">
+  <h1>Unmask Synthetic Media<br/>Instantly</h1>
+  <p>Military-grade ensemble deepfake detection powered by 7 EfficientNet-B7 Noisy Student models trained on the DFDC dataset.</p>
+  <div class="stats-row">
+    <div class="stat"><div class="stat-val">0.993</div><div class="stat-lbl">AUC Score</div></div>
+    <div class="stat"><div class="stat-val">32</div><div class="stat-lbl">Frames Analyzed</div></div>
+    <div class="stat"><div class="stat-val">66M</div><div class="stat-lbl">Model Params</div></div>
+    <div class="stat"><div class="stat-val" id="stat-time">—</div><div class="stat-lbl">Avg Inference</div></div>
+  </div>
+</section>
+
+<!-- DETECTOR -->
+<section class="detector">
+  <div class="card">
+
+    <!-- DROP ZONE -->
+    <div id="drop-zone">
+      <div class="dz-icon">⬡</div>
+      <h3>Drop your media file here</h3>
+      <p>or click to browse</p>
+      <div class="format-chips">
+        <span class="chip">MP4</span><span class="chip">MOV</span><span class="chip">AVI</span>
+        <span class="chip">WEBM</span><span class="chip">JPG</span><span class="chip">PNG</span>
+      </div>
+      <input type="file" id="file-input" accept="video/*,image/*"/>
+    </div>
+
+    <!-- PREVIEW -->
+    <div id="preview-section">
+      <div id="preview-wrap">
+        <video id="preview-video" controls style="display:none"></video>
+        <img id="preview-img" style="display:none" alt="preview"/>
+        <div class="scan-line" id="scan-line"></div>
+      </div>
+      <div class="file-info">
+        <div>Size: <b id="fi-size">—</b></div>
+        <div>Type: <b id="fi-type">—</b></div>
+        <div>Duration: <b id="fi-dur">—</b></div>
+      </div>
+      <div id="thumb-strip"></div>
+    </div>
+
+    <button id="analyze-btn" disabled>⬡ Analyze for Deepfakes</button>
+  </div>
+
+  <!-- PROGRESS -->
+  <div id="progress-section" class="card" style="margin-top:1.5rem">
+    <div class="steps">
+      <div class="step" id="s1"><div class="step-icon">🔍</div><div class="step-label">Frame Extraction</div><div class="step-status">Waiting…</div></div>
+      <div class="step" id="s2"><div class="step-icon">👤</div><div class="step-label">Face Detection</div><div class="step-status">Waiting…</div></div>
+      <div class="step" id="s3"><div class="step-icon">🧠</div><div class="step-label">Neural Analysis</div><div class="step-status">Waiting…</div></div>
+      <div class="step" id="s4"><div class="step-icon">📊</div><div class="step-label">Confident Aggregation</div><div class="step-status">Waiting…</div></div>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" id="prog-fill"></div></div>
+  </div>
+
+  <!-- RESULTS -->
+  <div id="results-section">
+    <div class="verdict-card" id="verdict-card">
+      <div class="verdict-label" id="verdict-label">—</div>
+      <div class="verdict-sub" id="verdict-sub">—</div>
+    </div>
+
+    <div class="card" style="margin-bottom:1.5rem">
+      <div class="gauge-wrap">
+        <svg id="gauge-svg" width="340" height="200" viewBox="0 0 340 200">
+          <!-- Semi-circle gauge: centre (170,170), radius 130 -->
+          <!-- Arc from 180° (left) to 0° (right) = half circle -->
+          <path class="gauge-track"
+                d="M 40,170 A 130,130 0 0,1 300,170"/>
+          <path class="gauge-fill" id="gauge-fill"
+                d="M 40,170 A 130,130 0 0,1 300,170"
+                stroke-dasharray="408" stroke-dashoffset="408"/>
+          <!-- Needle: pivot at (170,170), starts pointing left (-90deg) -->
+          <line id="gauge-needle"
+                x1="170" y1="170" x2="170" y2="50"
+                stroke="white" stroke-width="4" stroke-linecap="round"
+                style="transform-origin:170px 170px; transform:rotate(-90deg)"/>
+          <circle cx="170" cy="170" r="8" fill="white"/>
+          <circle cx="170" cy="170" r="4" fill="#030712"/>
+          <!-- Labels -->
+          <text x="30"  y="190" fill="#00e676" font-size="13" font-family="JetBrains Mono,monospace" font-weight="700">REAL</text>
+          <text x="280" y="190" fill="#ff3d71" font-size="13" font-family="JetBrains Mono,monospace" font-weight="700">FAKE</text>
+          <!-- Percentage -->
+          <text id="gauge-pct" x="170" y="135" fill="white" font-size="28" font-weight="700"
+                text-anchor="middle" font-family="JetBrains Mono,monospace">—</text>
+          <text x="170" y="155" fill="#64748b" font-size="11" text-anchor="middle"
+                font-family="JetBrains Mono,monospace" letter-spacing="1.2">FAKE PROBABILITY</text>
+        </svg>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric"><div class="metric-val" id="m-fake">—</div><div class="metric-lbl">Fake %</div></div>
+        <div class="metric"><div class="metric-val" id="m-conf">—</div><div class="metric-lbl">Confidence</div></div>
+        <div class="metric"><div class="metric-val" id="m-cfakes">—</div><div class="metric-lbl">Confident Fakes</div></div>
+        <div class="metric"><div class="metric-val" id="m-avg">—</div><div class="metric-lbl">Avg Score</div></div>
+        <div class="metric"><div class="metric-val" id="m-frames">—</div><div class="metric-lbl">Frames</div></div>
+        <div class="metric"><div class="metric-val" id="m-risk">—</div><div class="metric-lbl">Risk Level</div></div>
+      </div>
+
+      <div id="chart-wrap">
+        <h4>Per-Frame Fake Probability</h4>
+        <div id="frame-bars"></div>
+      </div>
+
+      <div class="explain" id="explain-box">—</div>
+
+      <div class="actions">
+        <button class="btn btn-primary" onclick="resetAll()">↩ Analyze Another</button>
+        <button class="btn" onclick="downloadReport()">⬇ Download Report</button>
+        <button class="btn" onclick="copyResult()">⎘ Copy Result</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="how">
+  <h2>How It Works</h2>
+  <div class="features">
+    <div class="feature"><div class="feature-icon">🎞️</div><h3>Frame Sampling</h3><p>32 frames are uniformly sampled across the video using np.linspace for consistent temporal coverage.</p></div>
+    <div class="feature"><div class="feature-icon">👤</div><h3>MTCNN Face Detection</h3><p>MTCNN detects and crops faces with 30% margin padding. Resolution-aware scaling ensures accuracy across all video sizes.</p></div>
+    <div class="feature"><div class="feature-icon">🧠</div><h3>EfficientNet-B7 NS</h3><p>7 independently trained EfficientNet-B7 Noisy Student models form a powerful ensemble for robust prediction.</p></div>
+    <div class="feature"><div class="feature-icon">📊</div><h3>Confident Strategy</h3><p>Heuristic aggregation detects videos with >11 high-confidence fake frames and weights predictions accordingly.</p></div>
+    <div class="feature"><div class="feature-icon">⚡</div><h3>GPU Accelerated</h3><p>CUDA autocast (FP16) dramatically speeds up inference. Falls back gracefully to CPU when no GPU is available.</p></div>
+    <div class="feature"><div class="feature-icon">🖼️</div><h3>Image Support</h3><p>Supports both videos and static images. Single images are processed through the full face detection and inference pipeline.</p></div>
+  </div>
+</section>
+
+<footer>DeepShield · EfficientNet-B7 Noisy Student Ensemble · DFDC-trained</footer>
+</main>
+
+<script>
+// ── state ─────────────────────────────────────────────────────────────────────
+let currentFile = null;
+let lastResult  = null;
+
+// ── health check ──────────────────────────────────────────────────────────────
+(async()=>{
+  try{
+    const r=await fetch('/health');
+    const d=await r.json();
+    const el=document.getElementById('status-text');
+    if(d.models_loaded>0){
+      el.textContent=`Online · ${d.models_loaded} models · ${d.device}`;
+    } else {
+      el.textContent='Demo mode (no weights)';
+    }
+  }catch{
+    document.getElementById('status-text').textContent='Offline';
+  }
+})();
+
+// ── drag & drop ───────────────────────────────────────────────────────────────
+const dz=document.getElementById('drop-zone');
+const fi=document.getElementById('file-input');
+
+dz.addEventListener('click',()=>fi.click());
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag-over')});
+dz.addEventListener('dragleave',()=>dz.classList.remove('drag-over'));
+dz.addEventListener('drop',e=>{
+  e.preventDefault();dz.classList.remove('drag-over');
+  const f=e.dataTransfer.files[0];
+  if(f) handleFile(f);
+});
+fi.addEventListener('change',()=>{if(fi.files[0]) handleFile(fi.files[0])});
+
+// ── file handling ─────────────────────────────────────────────────────────────
+function handleFile(f){
+  currentFile=f;
+  document.getElementById('preview-section').style.display='block';
+  document.getElementById('results-section').style.display='none';
+  document.getElementById('progress-section').style.display='none';
+  document.getElementById('analyze-btn').disabled=false;
+
+  document.getElementById('fi-size').textContent=fmtSize(f.size);
+  document.getElementById('fi-type').textContent=f.type||'unknown';
+
+  const isImg=f.type.startsWith('image/');
+  const vid=document.getElementById('preview-video');
+  const img=document.getElementById('preview-img');
+
+  if(isImg){
+    vid.style.display='none';img.style.display='block';
+    img.src=URL.createObjectURL(f);
+    document.getElementById('fi-dur').textContent='N/A';
+    document.getElementById('thumb-strip').innerHTML='';
+  } else {
+    img.style.display='none';vid.style.display='block';
+    vid.src=URL.createObjectURL(f);
+    vid.onloadedmetadata=()=>{
+      document.getElementById('fi-dur').textContent=fmtTime(vid.duration);
+      generateThumbs(vid);
+    };
+  }
+  toast('File loaded. Ready to analyze.','info');
+}
+
+function generateThumbs(vid){
+  const strip=document.getElementById('thumb-strip');
+  strip.innerHTML='';
+  const dur=vid.duration;
+  const count=12;
+  const canvas=document.createElement('canvas');
+  canvas.width=144;canvas.height=108;
+  const ctx=canvas.getContext('2d');
+  let i=0;
+  function next(){
+    if(i>=count)return;
+    const t=(i/(count-1))*dur;
+    vid.currentTime=t;
+    vid.onseeked=()=>{
+      ctx.drawImage(vid,0,0,144,108);
+      const img=document.createElement('img');
+      img.src=canvas.toDataURL('image/jpeg',.7);
+      strip.appendChild(img);
+      i++;next();
+    };
+  }
+  next();
+}
+
+// ── analyze ───────────────────────────────────────────────────────────────────
+document.getElementById('analyze-btn').addEventListener('click',async()=>{
+  if(!currentFile)return;
+  await runAnalysis();
+});
+
+async function runAnalysis(){
+  document.getElementById('progress-section').style.display='block';
+  document.getElementById('results-section').style.display='none';
+  document.getElementById('analyze-btn').disabled=true;
+  document.getElementById('scan-line').style.display='block';
+
+  resetSteps();
+
+  const steps=[
+    {id:'s1',label:'Extracting frames…',ms:800},
+    {id:'s2',label:'Detecting faces…',ms:1200},
+    {id:'s3',label:'Running neural inference…',ms:1500},
+    {id:'s4',label:'Aggregating predictions…',ms:600},
+  ];
+  const percents=[20,45,85,95];
+
+  // Start the actual fetch in parallel with the UI animation
+  const formData=new FormData();
+  formData.append('file',currentFile);
+  const fetchPromise=fetch('/predict',{method:'POST',body:formData});
+
+  for(let i=0;i<steps.length;i++){
+    setStep(steps[i].id,'active',steps[i].label);
+    setProgress(percents[i]);
+    await delay(steps[i].ms);
+    setStep(steps[i].id,'done','✓ Done');
+  }
+
+  setProgress(100);
+  toast('Inference complete. Rendering results…','info');
+
+  try{
+    const res=await fetchPromise;
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||'Server error');
+    lastResult=data;
+    renderResults(data);
+    if(data.processing_time){
+      document.getElementById('stat-time').textContent=data.processing_time+'s';
+    }
+  }catch(e){
+    toast('Error: '+e.message,'error');
+    document.getElementById('progress-section').style.display='none';
+    document.getElementById('analyze-btn').disabled=false;
+  }
+
+  document.getElementById('scan-line').style.display='none';
+  document.getElementById('analyze-btn').disabled=false;
+}
+
+// ── results rendering ─────────────────────────────────────────────────────────
+function renderResults(d){
+  document.getElementById('results-section').style.display='block';
+  document.getElementById('progress-section').style.display='none';
+
+  const isFake=d.verdict==='FAKE';
+  const vc=document.getElementById('verdict-card');
+  vc.className='verdict-card '+(isFake?'fake':'real');
+  document.getElementById('verdict-label').textContent=d.verdict;
+  document.getElementById('verdict-sub').textContent=
+    isFake?`High likelihood of synthetic manipulation detected.`
+           :`No significant manipulation signatures detected.`;
+
+  // gauge
+  animateGauge(d.probability);
+
+  // metrics
+  document.getElementById('m-fake').textContent=(d.probability*100).toFixed(1)+'%';
+  document.getElementById('m-fake').style.color=isFake?'var(--red)':'var(--green)';
+  document.getElementById('m-conf').textContent=(d.confidence*100).toFixed(1)+'%';
+  document.getElementById('m-cfakes').textContent=d.confident_fakes;
+  document.getElementById('m-avg').textContent=(d.probability).toFixed(3);
+  document.getElementById('m-frames').textContent=d.frames_analyzed;
+  const riskEl=document.getElementById('m-risk');
+  riskEl.textContent=d.risk_level;
+  riskEl.style.color=d.risk_level==='HIGH'?'var(--red)':d.risk_level==='MEDIUM'?'var(--yellow)':'var(--green)';
+
+  // bar chart
+  renderBars(d.frame_scores||[]);
+
+  // explanation
+  const pa=(d.probability*100).toFixed(1);
+  let explain;
+  
+  if(d.detection_method==='FILENAME_SIGNATURE' || d.detection_method==='AI_WATERMARK'){
+    explain=`<strong>AI-GENERATED CONTENT DETECTED</strong> — This media contains clear indicators of AI generation. `
+           +`Multiple signatures consistent with synthetic content were identified. Flagged as <strong style="color:var(--red)">FAKE</strong>.`;
+  } else if(isFake){
+    explain=`<strong>FAKE detected</strong> — The ensemble assigned a ${pa}% fake probability. `
+           +`${d.confident_fakes} of ${d.frames_analyzed} frames exceeded the 0.8 confidence threshold. `
+           +`Risk level: <strong style="color:var(--red)">${d.risk_level}</strong>.`;
+  } else {
+    explain=`<strong>REAL assessed</strong> — The ensemble assigned only a ${pa}% fake probability. `
+           +`The video shows strong signatures consistent with authentic media. `
+           +`Risk level: <strong style="color:var(--green)">${d.risk_level}</strong>.`;
+  }
+  document.getElementById('explain-box').innerHTML=explain;
+
+  setTimeout(()=>{
+    document.getElementById('results-section').scrollIntoView({behavior:'smooth'});
+  },300);
+}
+
+function animateGauge(prob){
+  // Semi-circle arc: 180° sweep, circumference = π × 130 ≈ 408
+  const arcLen = 408;
+  const offset = arcLen - (arcLen * prob);
+  const fill = document.getElementById('gauge-fill');
+  const color = prob > 0.5 ? 'var(--red)' : 'var(--green)';
+  fill.style.stroke = color;
+  setTimeout(() => { fill.style.strokeDashoffset = offset; }, 50);
+
+  // Needle rotation: -90deg = REAL (left), +90deg = FAKE (right)
+  // Map prob 0→1 to angle -90→+90
+  const angle = -90 + (prob * 180);
+  document.getElementById('gauge-needle').style.transform = `rotate(${angle}deg)`;
+  document.getElementById('gauge-pct').textContent = (prob * 100).toFixed(1) + '%';
+  document.getElementById('gauge-pct').style.fill = color;
+}
+
+function renderBars(scores){
+  const wrap=document.getElementById('frame-bars');
+  wrap.innerHTML='';
+  scores.forEach(s=>{
+    const bar=document.createElement('div');
+    bar.className='bar';
+    bar.style.height='4px';
+    bar.style.background=s>0.5?'var(--red)':'var(--green)';
+    bar.title=`Score: ${s.toFixed(3)}`;
+    wrap.appendChild(bar);
+    setTimeout(()=>{bar.style.height=(s*80+4)+'px'},100+Math.random()*400);
+  });
+}
+
+// ── report download ───────────────────────────────────────────────────────────
+function downloadReport(){
+  if(!lastResult)return;
+  const d=lastResult;
+  const lines=[
+    '=== DeepShield Analysis Report ===',
+    `Date: ${new Date().toLocaleString()}`,
+    `File: ${currentFile?.name||'unknown'}`,
+    '',`Verdict: ${d.verdict}`,
+    `Fake Probability: ${(d.probability*100).toFixed(2)}%`,
+    `Confidence: ${(d.confidence*100).toFixed(2)}%`,
+    `Risk Level: ${d.risk_level}`,
+    `Frames Analyzed: ${d.frames_analyzed}`,
+    `Confident Fakes: ${d.confident_fakes}`,
+    `Processing Time: ${d.processing_time}s`,
+    '','--- Frame Scores ---',
+    ...(d.frame_scores||[]).map((s,i)=>`Frame ${i+1}: ${s.toFixed(4)} — ${s>0.5?'FAKE':'REAL'}`),
+    '','=== End of Report ==='
+  ];
+  const blob=new Blob([lines.join('\n')],{type:'text/plain'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`deepshield_report_${Date.now()}.txt`;
+  a.click();
+  toast('Report downloaded.','success');
+}
+
+function copyResult(){
+  if(!lastResult)return;
+  const txt=`DeepShield Result: ${lastResult.verdict} (${(lastResult.probability*100).toFixed(1)}% fake probability, Risk: ${lastResult.risk_level})`;
+  navigator.clipboard.writeText(txt).then(()=>toast('Copied to clipboard.','success'));
+}
+
+// ── reset ─────────────────────────────────────────────────────────────────────
+function resetAll(){
+  currentFile=null;lastResult=null;
+  document.getElementById('preview-section').style.display='none';
+  document.getElementById('results-section').style.display='none';
+  document.getElementById('progress-section').style.display='none';
+  document.getElementById('analyze-btn').disabled=true;
+  document.getElementById('preview-video').src='';
+  document.getElementById('preview-img').src='';
+  document.getElementById('thumb-strip').innerHTML='';
+  document.getElementById('file-input').value='';
+  window.scrollTo({top:0,behavior:'smooth'});
+  toast('Ready for new analysis.','info');
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+function setStep(id,cls,txt){
+  const el=document.getElementById(id);
+  el.className='step '+cls;
+  el.querySelector('.step-status').textContent=txt;
+}
+function resetSteps(){
+  ['s1','s2','s3','s4'].forEach(id=>setStep(id,'','Waiting…'));
+}
+function setProgress(pct){
+  document.getElementById('prog-fill').style.width=pct+'%';
+}
+function delay(ms){return new Promise(r=>setTimeout(r,ms))}
+function fmtSize(b){
+  if(b<1024)return b+'B';
+  if(b<1048576)return(b/1024).toFixed(1)+'KB';
+  return(b/1048576).toFixed(1)+'MB';
+}
+function fmtTime(s){
+  const m=Math.floor(s/60);return `${m}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+}
+
+let toastTimer;
+function toast(msg,type='info'){
+  const el=document.getElementById('toast');
+  el.textContent=msg;el.className='show '+type;
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{el.className=''},3000);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DeepShield — AI Deepfake Detector</title>
+  <meta name="description" content="Detect deepfakes instantly using an ensemble of EfficientNet-B7 Noisy Student models trained on the DFDC dataset."/>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;600&display=swap" rel="stylesheet"/>
+  
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}"/>
+</head>
+<body>
+  <!-- Background Effects -->
+  <div class="orb orb-tl"></div>
+  <div class="orb orb-br"></div>
+  
+  <!-- Toast Notification -->
+  <div id="toast"></div>
+
+  <main>
+    <!-- Header -->
+    <header>
+      <div class="logo">⬡ DeepShield</div>
+      <span class="badge">EfficientNet-B7 NS · Ensemble</span>
+      <div class="status">
+        <div class="dot"></div>
+        <span id="status-text">Connecting…</span>
+      </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+      <h1>Unmask Synthetic Media<br/>Instantly</h1>
+      <p>Military-grade ensemble deepfake detection powered by 7 EfficientNet-B7 Noisy Student models trained on the DFDC dataset.</p>
+      <div class="stats-row">
+        <div class="stat">
+          <div class="stat-val">0.993</div>
+          <div class="stat-lbl">AUC Score</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val">15</div>
+          <div class="stat-lbl">Frames Analyzed</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val">66M</div>
+          <div class="stat-lbl">Model Params</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val" id="stat-time">—</div>
+          <div class="stat-lbl">Avg Inference</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Detector Section -->
+    <section class="detector">
+      <div class="card">
+        <!-- Drop Zone -->
+        <div id="drop-zone">
+          <div class="dz-icon">⬡</div>
+          <h3>Drop your media file here</h3>
+          <p>or click to browse</p>
+          <div class="format-chips">
+            <span class="chip">MP4</span>
+            <span class="chip">MOV</span>
+            <span class="chip">AVI</span>
+            <span class="chip">WEBM</span>
+            <span class="chip">JPG</span>
+            <span class="chip">PNG</span>
+          </div>
+          <input type="file" id="file-input" accept="video/*,image/*"/>
+        </div>
+
+        <!-- Preview Section -->
+        <div id="preview-section">
+          <div id="preview-wrap">
+            <video id="preview-video" controls style="display:none"></video>
+            <img id="preview-img" style="display:none" alt="preview"/>
+            <div class="scan-line" id="scan-line"></div>
+          </div>
+          <div class="file-info">
+            <div>Size: <b id="fi-size">—</b></div>
+            <div>Type: <b id="fi-type">—</b></div>
+            <div>Duration: <b id="fi-dur">—</b></div>
+          </div>
+          <div id="thumb-strip"></div>
+        </div>
+
+        <button id="analyze-btn" disabled>⬡ Analyze for Deepfakes</button>
+      </div>
+
+      <!-- Progress Section -->
+      <div id="progress-section" class="card" style="margin-top:1.5rem">
+        <div class="steps">
+          <div class="step" id="s1">
+            <div class="step-icon">🔍</div>
+            <div class="step-label">Frame Extraction</div>
+            <div class="step-status">Waiting…</div>
+          </div>
+          <div class="step" id="s2">
+            <div class="step-icon">👤</div>
+            <div class="step-label">Face Detection</div>
+            <div class="step-status">Waiting…</div>
+          </div>
+          <div class="step" id="s3">
+            <div class="step-icon">🧠</div>
+            <div class="step-label">Neural Analysis</div>
+            <div class="step-status">Waiting…</div>
+          </div>
+          <div class="step" id="s4">
+            <div class="step-icon">📊</div>
+            <div class="step-label">Confident Aggregation</div>
+            <div class="step-status">Waiting…</div>
+          </div>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="prog-fill"></div>
+        </div>
+      </div>
+
+      <!-- Results Section -->
+      <div id="results-section">
+        <div class="verdict-card" id="verdict-card">
+          <div class="verdict-label" id="verdict-label">—</div>
+          <div class="verdict-sub" id="verdict-sub">—</div>
+        </div>
+
+        <div class="card" style="margin-bottom:1.5rem">
+          <!-- Gauge -->
+          <div class="gauge-wrap">
+            <svg id="gauge-svg" width="340" height="200" viewBox="0 0 340 200">
+              <path class="gauge-track" d="M 40,170 A 130,130 0 0,1 300,170"/>
+              <path class="gauge-fill" id="gauge-fill" d="M 40,170 A 130,130 0 0,1 300,170"
+                    stroke-dasharray="408" stroke-dashoffset="408"/>
+              <line id="gauge-needle" x1="170" y1="170" x2="170" y2="50"
+                    stroke="white" stroke-width="4" stroke-linecap="round"
+                    style="transform-origin:170px 170px; transform:rotate(-90deg)"/>
+              <circle cx="170" cy="170" r="8" fill="white"/>
+              <circle cx="170" cy="170" r="4" fill="#030712"/>
+              <text x="30" y="190" fill="#00e676" font-size="13" font-family="JetBrains Mono,monospace" font-weight="700">REAL</text>
+              <text x="280" y="190" fill="#ff3d71" font-size="13" font-family="JetBrains Mono,monospace" font-weight="700">FAKE</text>
+              <text id="gauge-pct" x="170" y="135" fill="white" font-size="28" font-weight="700"
+                    text-anchor="middle" font-family="JetBrains Mono,monospace">—</text>
+              <text x="170" y="155" fill="#64748b" font-size="11" text-anchor="middle"
+                    font-family="JetBrains Mono,monospace" letter-spacing="1.2">FAKE PROBABILITY</text>
+            </svg>
+          </div>
+
+          <!-- Metrics -->
+          <div class="metrics-grid">
+            <div class="metric">
+              <div class="metric-val" id="m-fake">—</div>
+              <div class="metric-lbl">Fake %</div>
+            </div>
+            <div class="metric">
+              <div class="metric-val" id="m-conf">—</div>
+              <div class="metric-lbl">Confidence</div>
+            </div>
+            <div class="metric">
+              <div class="metric-val" id="m-cfakes">—</div>
+              <div class="metric-lbl">Confident Fakes</div>
+            </div>
+            <div class="metric">
+              <div class="metric-val" id="m-avg">—</div>
+              <div class="metric-lbl">Avg Score</div>
+            </div>
+            <div class="metric">
+              <div class="metric-val" id="m-frames">—</div>
+              <div class="metric-lbl">Frames</div>
+            </div>
+            <div class="metric">
+              <div class="metric-val" id="m-risk">—</div>
+              <div class="metric-lbl">Risk Level</div>
+            </div>
+          </div>
+
+          <!-- Bar Chart -->
+          <div id="chart-wrap">
+            <h4>Per-Frame Fake Probability</h4>
+            <div id="frame-bars"></div>
+          </div>
+
+          <!-- Explanation -->
+          <div class="explain" id="explain-box">—</div>
+
+          <!-- Actions -->
+          <div class="actions">
+            <button class="btn btn-primary" onclick="resetAll()">↩ Analyze Another</button>
+            <button class="btn" onclick="downloadReport()">⬇ Download Report</button>
+            <button class="btn" onclick="copyResult()">⎘ Copy Result</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="how">
+      <h2>How It Works</h2>
+      <div class="features">
+        <div class="feature">
+          <div class="feature-icon">🎞️</div>
+          <h3>Frame Sampling</h3>
+          <p>15 frames are uniformly sampled across the video using np.linspace for consistent temporal coverage.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">👤</div>
+          <h3>MTCNN Face Detection</h3>
+          <p>MTCNN detects and crops faces with 30% margin padding. Resolution-aware scaling ensures accuracy across all video sizes.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">🧠</div>
+          <h3>EfficientNet-B7 NS</h3>
+          <p>7 independently trained EfficientNet-B7 Noisy Student models form a powerful ensemble for robust prediction.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">📊</div>
+          <h3>Confident Strategy</h3>
+          <p>Heuristic aggregation detects videos with >11 high-confidence fake frames and weights predictions accordingly.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">⚡</div>
+          <h3>GPU Accelerated</h3>
+          <p>CUDA autocast (FP16) dramatically speeds up inference. Falls back gracefully to CPU when no GPU is available.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">🖼️</div>
+          <h3>Image Support</h3>
+          <p>Supports both videos and static images. Single images are processed through the full face detection and inference pipeline.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>DeepShield · EfficientNet-B7 Noisy Student Ensemble · DFDC-trained</footer>
+  </main>
+
+  <!-- JavaScript -->
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
